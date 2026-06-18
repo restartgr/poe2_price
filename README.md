@@ -167,4 +167,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build\make_release.ps1 -Sk
 
 ## ⭐ Star 历史
 
-[![Star History Chart](https://api.star-history.com/chart?repos=weixiao030/poe2_price&type=date&legend=top-left)](https://www.star-history.com/?type=date&repos=weixiao030%2Fpoe2_price)
+<img width="1374" height="1098" alt="star-history-2026619" src="https://github.com/user-attachments/assets/e6361bd8-a214-40f1-b145-37f86e842d8e" />
