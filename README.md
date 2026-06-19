@@ -157,6 +157,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build\make_release.ps1 -Sk
 
 输出目录：`三服合一物价补丁代码\发布版\物价补丁`
 
+### GitHub Actions 打包
+
+如果本地没有 Windows 构建环境，可以在 GitHub 上打包：
+
+1. 打开仓库的 **Actions** 页面
+2. 选择 **Build Windows Release**
+3. 点击 **Run workflow**
+4. 构建完成后，在本次 run 的 **Artifacts** 下载 `poe2-economy-display-mod`
+
+该 workflow 使用 Windows runner 调用 `build/make_release.ps1 -SkipDoc`，并上传 `poe2-economy-display-mod.zip`。
+
 ### 调试参数
 
 发布版 exe 支持透传参数：
