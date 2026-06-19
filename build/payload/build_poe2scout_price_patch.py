@@ -48,6 +48,7 @@ DEFAULT_TC_BASEITEMS = (
 )
 DEFAULT_PATCH_SCRIPT = Path(__file__).with_name("poe2_name_price_patch.py")
 DISPLAY_NAME_FIELD_INDEX = 8
+DEFAULT_UNIQUE_CATEGORIES = ("accessory", "armour", "weapon")
 
 
 @dataclass(frozen=True)
@@ -296,6 +297,65 @@ def fetch_scout_data(client: RetryingRequests, api_base: str, league: str) -> di
     return results
 
 
+def fetch_unique_categories(
+    client: RetryingRequests, api_base: str, league: str
+) -> list[dict[str, Any]]:
+    data = client.get_json(f"{api_base}/poe2/Leagues/{league}/Items/Categories")
+    return data.get("UniqueCategories") or []
+
+
+def fetch_unique_category_items(
+    client: RetryingRequests,
+    api_base: str,
+    league: str,
+    category: str,
+    per_page: int = 50,
+) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode(
+        {
+            "Category": category,
+            "ReferenceCurrency": "exalted",
+            "Page": 1,
+            "PerPage": per_page,
+            "DataPoints": 7,
+            "FrequencyHours": 24,
+        }
+    )
+    data = client.get_json(
+        f"{api_base}/poe2/Leagues/{league}/Uniques/ByCategory?{query}"
+    )
+    return data.get("Items") or []
+
+
+def fetch_unique_items(
+    client: RetryingRequests,
+    api_base: str,
+    league: str,
+    max_workers: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    categories = [
+        category
+        for category in fetch_unique_categories(client, api_base, league)
+        if category.get("ApiId") in DEFAULT_UNIQUE_CATEGORIES
+    ]
+    all_items: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        future_to_category = {
+            pool.submit(
+                fetch_unique_category_items,
+                client,
+                api_base,
+                league,
+                category["ApiId"],
+            ): category
+            for category in categories
+            if category.get("ApiId")
+        }
+        for future in as_completed(future_to_category):
+            all_items.extend(future.result())
+    return categories, all_items
+
+
 def to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     try:
         return Decimal(str(value))
@@ -363,6 +423,28 @@ def choose_best_prices(
                 source_pair="ReferenceCurrencies",
             )
     return best
+
+
+def add_unique_observations(
+    best: dict[str, PriceObservation], unique_items: list[dict[str, Any]]
+) -> None:
+    for item in unique_items:
+        price = to_decimal(item.get("CurrentPrice"))
+        if price <= 0:
+            continue
+        unique_id = item.get("UniqueItemId") or item.get("ItemId")
+        name = (item.get("Name") or item.get("Text") or "").strip()
+        if not unique_id or not name:
+            continue
+        api_id = f"unique:{unique_id}"
+        best[api_id] = PriceObservation(
+            api_id=api_id,
+            en_name=name,
+            category=f"unique:{item.get('CategoryApiId') or ''}",
+            price_exalted=price,
+            value_traded=to_decimal(item.get("CurrentQuantity")),
+            source_pair=f"Unique/{item.get('CategoryApiId') or ''}",
+        )
 
 
 def divine_price_exalted(best: dict[str, PriceObservation]) -> Decimal:
@@ -549,6 +631,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=4)
     parser.add_argument("--backoff", type=float, default=0.8)
     parser.add_argument("--poe2db-fallback", action="store_true")
+    parser.add_argument("--no-uniques", action="store_true")
     parser.add_argument("--no-build-patch", action="store_true")
     parser.add_argument("--patch-script", type=Path, default=DEFAULT_PATCH_SCRIPT)
     parser.add_argument("--output-zip", type=Path)
@@ -577,6 +660,16 @@ def main(argv: list[str]) -> int:
     base_pairs = load_base_item_pairs(args.en_baseitems, args.tc_baseitems)
     observations = collect_price_observations(scout["snapshot_pairs"])
     best = choose_best_prices(observations, scout["reference_currencies"])
+    unique_categories: list[dict[str, Any]] = []
+    unique_items: list[dict[str, Any]] = []
+    if not args.no_uniques:
+        unique_categories, unique_items = fetch_unique_items(
+            client,
+            args.api_base.rstrip("/"),
+            args.league,
+            max_workers=max(1, args.max_workers),
+        )
+        add_unique_observations(best, unique_items)
     divine_exalted = divine_price_exalted(best)
     apply_display_prices(best, divine_exalted)
     rows, missing = match_prices_to_base_items(
@@ -616,6 +709,8 @@ def main(argv: list[str]) -> int:
         "snapshot_epoch": scout["exchange_snapshot"].get("Epoch"),
         "base_currency": scout["exchange_snapshot"].get("BaseCurrencyText"),
         "unique_scout_items": len(best),
+        "unique_categories": len(unique_categories),
+        "unique_items": len(unique_items),
         "matched_items": len(rows),
         "missing_items": len(missing),
         "divine_price_exalted": str(divine_exalted),
