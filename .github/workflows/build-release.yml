@@ -1,0 +1,46 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-release.yml"
+      - "build/**"
+      - "物价补丁/**"
+      - "restore-seeds/**"
+
+jobs:
+  build-release:
+    name: Build release package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.x"
+
+      - name: Build release folder
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\build\make_release.ps1 -SkipDoc
+
+      - name: Pack release zip
+        shell: powershell
+        run: |
+          if (Test-Path -LiteralPath ".\POE2物价补丁-发布版.zip") {
+            Remove-Item -LiteralPath ".\POE2物价补丁-发布版.zip" -Force
+          }
+          Compress-Archive -LiteralPath ".\发布版\物价补丁" -DestinationPath ".\POE2物价补丁-发布版.zip" -Force
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: POE2物价补丁-发布版
+          path: POE2物价补丁-发布版.zip
+          if-no-files-found: error
